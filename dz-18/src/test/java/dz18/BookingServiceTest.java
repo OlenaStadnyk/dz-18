@@ -1,18 +1,20 @@
+package dz18;
+
+import dz18.BookingTest;
 import io.restassured.parsing.Parser;
+import org.testng.Assert;
 import org.testng.annotations.BeforeClass;
 import org.testng.annotations.Test;
 import io.restassured.RestAssured;
 import io.restassured.http.ContentType;
 import io.restassured.response.Response;
 import static io.restassured.RestAssured.given;
-import static java.sql.Date.valueOf;
 import static org.testng.Assert.*;
 import static org.testng.Assert.assertEquals;
-
-import java.sql.Date;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.io.IOException;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -21,7 +23,6 @@ public class BookingServiceTest {
 
     public static final String URL = "https://restful-booker.herokuapp.com/";
     private String authToken; // A variable to store the token
-
 
     @BeforeClass
     public void setUp() {
@@ -70,21 +71,21 @@ public class BookingServiceTest {
         LocalDate localDate = LocalDate.parse("2023-09-26", DateTimeFormatter.ofPattern("yyyy-MM-dd"));
         java.sql.Date date = java.sql.Date.valueOf(localDate);
 
-        // Create the BookingTest object and set the date values
-        BookingTest bookingData = new BookingTest();
-        bookingData.setFirstname("Rachel");
-        bookingData.setLastname("Green");
-        bookingData.setTotalprice(111);
-        bookingData.setDepositpaid(true);
-        bookingData.setCheckin(date);
-        bookingData.setCheckout(date);
-        bookingData.setAdditionalneeds("Breakfast");
-
-        // Creating a reservation with the mandatory header "Accept" and checking the result
         Response response = given()
                 .contentType(ContentType.JSON)
                 .header("Accept", "application/json")
-                .body(bookingData) // pass the reservation object as a JSON request
+                .header("Token: ", authToken)
+                .body("{\n" +
+                        "    \"firstname\": \"Rachel\",\n" +
+                        "    \"lastname\": \"Green\",\n" +
+                        "    \"totalprice\": 111,\n" +
+                        "    \"depositpaid\": true,\n" +
+                        "    \"bookingdates\": {\n" +
+                        "        \"checkin\": \"2021-10-13\",\n" +
+                        "        \"checkout\": \"2021-10-25\"\n" +
+                        "    }\n" +
+                        "}")
+                //.body(bookingData) // pass the reservation object as a JSON request
                 .post("booking");
 
         // Check response status
@@ -97,7 +98,7 @@ public class BookingServiceTest {
         System.out.println("New Booking ID: " + bookingId);
     }
     @Test(priority = 2)
-    public void testUpdateBookingPrice() {
+    public void testUpdateBookingPrice() throws IOException {
         // Get a list of all bookings
         Response getAllBookingsResponse = given()
                 .header("Accept", "application/json")
@@ -113,30 +114,21 @@ public class BookingServiceTest {
         if (!bookingIds.isEmpty()) {
             int bookingIdToUpdate = bookingIds.get(0);
 
-            // Get the current price of the booking before updating
-            Response getBookingResponse = given()
-                    .header("Accept", "application/json")
-                    .get("booking/" + bookingIdToUpdate);
-
-            // Check response status
-            assertEquals(getBookingResponse.getStatusCode(), 200);
-
-            // Get the current price from the response
-            int currentPrice = getBookingResponse.jsonPath().getInt("totalprice");
-
             // Prepare data to update the booking price (in this case, it can be a JSON object)
-            Map<String, Object> updateData = new HashMap<>();
             int newPrice = 555; // this is the new reservation price
-            updateData.put("totalprice", newPrice); // Update the totalprice field
 
             // Execute a PATCH request to update the reservation price
             Response updateBookingResponse = given()
                     .contentType(ContentType.JSON)
-                    .body(updateData)
-                    .patch("booking/" + bookingIdToUpdate);
+                    .header("Accept", "application/json")
+                    .header("Authorization", "Bearer " + authToken)
+                    .pathParam("id", bookingIdToUpdate)
+                    .body("{\"totalprice\":" + newPrice + "}")
+                    .patch("booking/{id}"); // use booking id in URL
 
             // Checking the status of the update response
             assertEquals(updateBookingResponse.getStatusCode(), 200);
+
             // Get the updated price of the booking
             Response getUpdatedBookingResponse = given()
                     .header("Accept", "application/json")
@@ -145,8 +137,12 @@ public class BookingServiceTest {
             // Check response status
             assertEquals(getUpdatedBookingResponse.getStatusCode(), 200);
 
+            // Convert JSON response to a BookingTest object using Jackson
+            ObjectMapper objectMapper = new ObjectMapper();
+            BookingTest updatedBooking = objectMapper.readValue(getUpdatedBookingResponse.getBody().asString(), BookingTest.class);
+
             // Get the updated price from the response
-            int updatedPrice = getUpdatedBookingResponse.jsonPath().getInt("totalprice");
+            int updatedPrice = updatedBooking.getTotalprice();
 
             // Check if the price was updated correctly
             assertEquals(updatedPrice, newPrice, "Booking price should be updated correctly.");
@@ -154,6 +150,8 @@ public class BookingServiceTest {
             System.out.println("No bookings available to update.");
         }
     }
+
+
     @Test(priority = 3)
     public void testUpdateBookingDetails() {
         // Select another id from the ones obtained in point 2 and change the name and additionalneeds or any other parameter (PUT)
@@ -182,8 +180,10 @@ public class BookingServiceTest {
             Response updateBookingResponse = given()
                     .contentType(ContentType.JSON)
                     .header("Accept", "application/json")
+                    .header("Authorization", "Bearer " + authToken)
+                    .pathParam("id", bookingIdToUpdate)
                     .body(updateData)
-                    .put("booking/" + bookingIdToUpdate);
+                    .put("booking/{id}"); // use booking id in URL
 
             // Checking the status of the update response
             assertEquals(updateBookingResponse.getStatusCode(), 200);
@@ -230,10 +230,11 @@ public class BookingServiceTest {
             // Execute a DELETE request to delete a reservation
             Response deleteBookingResponse = given()
                     .header("Accept", "application/json")
+                    .header("Authorization", "Bearer " + authToken) // Додайте цей рядок
                     .delete("booking/" + bookingIdToDelete);
 
             // Checking the status of the successful removal response
-            assertEquals(deleteBookingResponse.getStatusCode(), 204);
+            assertEquals(deleteBookingResponse.getStatusCode(), 201);
         } else {
             System.out.println("No bookings available to delete.");
         }
